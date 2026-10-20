@@ -1,0 +1,81 @@
+name: 'JS Runtime Bump'
+description: 'Open pull requests that keep the Node.js, Bun, pnpm and peer dependency versions a JavaScript project supports up to date'
+author: 'Kanon'
+
+branding:
+  icon: 'arrow-up-circle'
+  color: 'green'
+
+inputs:
+  targets:
+    description: >
+      What to keep up to date, one per line: `node`, `bun`, `pnpm`, or
+      `npm:<package>` for a peer dependency such as `npm:eslint`. Each target
+      gets its own pull request.
+    required: true
+  matrix:
+    description: >
+      CI matrices to maintain, one per line, as
+      `<workflow file>#<matrix key>=<target>`, e.g.
+      `.github/workflows/test.yml#node-version=node`. The target must also be
+      listed in `targets`.
+    required: false
+    default: ''
+  github-token:
+    description: >
+      Token that pushes the branches and opens the pull requests. Use a GitHub
+      App token or a PAT: `GITHUB_TOKEN` cannot update files under
+      `.github/workflows/`, and pull requests it opens do not trigger CI.
+      Not needed when `dry-run` is true.
+    required: false
+    default: ''
+  working-directory:
+    description: 'Directory holding package.json and the version files, relative to the repository root.'
+    required: false
+    default: '.'
+  base-branch:
+    description: 'Branch the pull requests target. Defaults to the checked-out branch.'
+    required: false
+    default: ''
+  post-update:
+    description: >
+      Shell command run in `working-directory` after the files are updated and
+      before committing, e.g. `pnpm install --lockfile-only`. Changes to tracked
+      files and to files staged by the command are committed.
+    required: false
+    default: ''
+  repository:
+    description: 'Target repository in "owner/repo" format.'
+    required: false
+    default: ${{ github.repository }}
+  dry-run:
+    description: 'When "true", log the planned changes without writing, pushing or opening anything.'
+    required: false
+    default: 'false'
+
+outputs:
+  changes:
+    description: 'JSON array of `{ target, title, files }`, one entry per target that needs a change.'
+    value: ${{ steps.run.outputs.changes }}
+  pull-requests:
+    description: 'Comma-separated URLs of the pull requests that were opened or updated.'
+    value: ${{ steps.run.outputs.pull-requests }}
+
+runs:
+  using: 'composite'
+  steps:
+    # Runs on the Node.js already on the runner. Setting one up here would put
+    # it first on PATH for every later step in the caller's job.
+    - id: run
+      shell: bash
+      env:
+        INPUT_TARGETS: ${{ inputs.targets }}
+        INPUT_MATRIX: ${{ inputs.matrix }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_BASE_BRANCH: ${{ inputs.base-branch }}
+        INPUT_POST_UPDATE: ${{ inputs.post-update }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        GITHUB_WORKSPACE: ${{ github.workspace }}
+      run: node "${GITHUB_ACTION_PATH}/dist/main.js"

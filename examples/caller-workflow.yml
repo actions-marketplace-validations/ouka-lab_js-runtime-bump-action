@@ -1,0 +1,51 @@
+name: Runtime bump
+
+on:
+  schedule:
+    # Saturdays 10:00 JST
+    - cron: '0 1 * * 6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # GITHUB_TOKEN cannot push changes to .github/workflows/, and pull
+      # requests it opens do not trigger CI. A GitHub App token can do both.
+      # The App needs Contents, Pull requests and Workflows: read & write.
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.BUMP_APP_ID }}
+          private-key: ${{ secrets.BUMP_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the action pushes with the App token, not the checkout token
+          persist-credentials: false
+          show-progress: false
+
+      # Needed only for `post-update` below.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      # Replace the SHA with the release you want:
+      #   https://github.com/ouka-lab/js-runtime-bump-action/releases
+      - uses: ouka-lab/js-runtime-bump-action@0000000000000000000000000000000000000000 # v1.0.0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          targets: |
+            node
+            pnpm
+            npm:eslint
+          matrix: |
+            .github/workflows/test.yml#node-version=node
+            .github/workflows/test.yml#eslint=npm:eslint
+          # Keep the lockfile in step with package.json.
+          post-update: pnpm install --lockfile-only
+
+          # Preview the changes without pushing anything.
+          # dry-run: 'true'

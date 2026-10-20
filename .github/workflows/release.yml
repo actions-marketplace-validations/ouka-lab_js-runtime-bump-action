@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      # to move the major tag and create the release
+      contents: write
+
+    steps:
+      - uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          allowed-endpoints:
+            api.github.com:443
+            github.com:443
+            uploads.github.com:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          show-progress: false
+
+      - name: check that the tag matches package.json
+        run: |
+          declared="v$(jq -r .version package.json)"
+          if [ "$GITHUB_REF_NAME" != "$declared" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $declared. Run 'pnpm changeset version' and tag that commit."
+            exit 1
+          fi
+
+      # CHANGELOG.md is written by `changeset version`: take the `## <version>` section as the release notes
+      - name: extract the release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## ${version}" '
+            $0 == heading { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+            echo "::error::no \"## ${version}\" section in CHANGELOG.md"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/release-notes.md"
+
+      # `uses: ouka-lab/js-runtime-bump-action@v1` follows the latest v1.x.y
+      - name: move the major tag
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --force "$major" "$GITHUB_SHA"
+          git push --force origin "refs/tags/$major"
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          body_path: ${{ runner.temp }}/release-notes.md

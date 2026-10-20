@@ -1,0 +1,47 @@
+{
+  "name": "js-runtime-bump-action",
+  "version": "0.0.0",
+  "description": "Open pull requests that keep the Node.js, Bun, pnpm and peer dependency versions a JavaScript project supports up to date",
+  "license": "MIT",
+  "author": "Kanon",
+  "type": "module",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ouka-lab/js-runtime-bump-action"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "test": "vitest run --coverage",
+    "build": "node scripts/build.mjs",
+    "changeset": "changeset"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "11.3.0",
+      "onFail": "error"
+    }
+  },
+  "dependencies": {
+    "semver": "^7.8.5",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^22.20.5",
+    "@types/semver": "^7.8.0",
+    "@vitest/coverage-v8": "^5.0.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
