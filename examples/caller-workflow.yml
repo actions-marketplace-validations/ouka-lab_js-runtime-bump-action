@@ -46,6 +46,8 @@ jobs:
             .github/workflows/test.yml#eslint=npm:eslint
           # Keep the lockfile in step with package.json.
           post-update: pnpm install --lockfile-only
+          # Match pnpm's minimumReleaseAge (14 days) if you use it.
+          minimum-release-age: '14'
 
           # Preview the changes without pushing anything.
           # dry-run: 'true'

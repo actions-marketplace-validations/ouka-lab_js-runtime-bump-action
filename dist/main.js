@@ -9431,6 +9431,10 @@ function parseInputs(env) {
   if (!owner || !repo || rest.length > 0) {
     throw new Error(`\`repository\` must be in "owner/repo" format, got: "${repository ?? ""}"`);
   }
+  const age = trimmed(env.INPUT_MINIMUM_RELEASE_AGE) ?? "0";
+  if (!/^\d+$/.test(age)) {
+    throw new Error(`\`minimum-release-age\` must be a whole number of days, got: "${age}"`);
+  }
   const repoRoot = trimmed(env.GITHUB_WORKSPACE) ?? process.cwd();
   return {
     token,
@@ -9443,6 +9447,7 @@ function parseInputs(env) {
     owner,
     repo,
     dryRun,
+    minimumReleaseAge: Number(age),
     serverUrl: trimmed(env.GITHUB_SERVER_URL) ?? "https://github.com",
     apiUrl: trimmed(env.GITHUB_API_URL) ?? "https://api.github.com",
     outputFile: trimmed(env.GITHUB_OUTPUT)
@@ -9557,6 +9562,7 @@ import { join as join2 } from "node:path";
 // src/sources/node.ts
 var SCHEDULE_URL = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json";
 var INDEX_URL = "https://nodejs.org/dist/index.json";
+var DAY = 24 * 60 * 60 * 1e3;
 async function getJson(fetcher, url) {
   const response = await fetcher(url);
   if (!response.ok) {
@@ -9564,7 +9570,7 @@ async function getJson(fetcher, url) {
   }
   return await response.json();
 }
-async function fetchNodeStatus(fetcher, today) {
+async function fetchNodeStatus(fetcher, today, releasedBy) {
   const schedule = await getJson(fetcher, SCHEDULE_URL);
   const supported = [];
   const endOfLife = [];
@@ -9587,30 +9593,70 @@ async function fetchNodeStatus(fetcher, today) {
     throw new Error(`${SCHEDULE_URL} lists no Node.js line in LTS on ${today}`);
   }
   const index = await getJson(fetcher, INDEX_URL);
-  const latest = index.find((entry) => entry.version.startsWith(`v${newest.major}.`));
+  const oldEnough = (entry) => releasedBy === void 0 || Date.parse(`${entry.date}T00:00:00Z`) + DAY <= releasedBy;
+  let latest;
+  for (const line of [...supported].reverse()) {
+    latest = index.find((entry) => entry.version.startsWith(`v${line.major}.`) && oldEnough(entry));
+    if (latest || releasedBy === void 0) {
+      break;
+    }
+  }
   if (!latest) {
-    throw new Error(`${INDEX_URL} has no release for Node.js ${newest.major}`);
+    throw new Error(
+      releasedBy === void 0 ? `${INDEX_URL} has no release for Node.js ${newest.major}` : `${INDEX_URL} has no supported Node.js release older than ${new Date(releasedBy).toISOString()}`
+    );
   }
   return { supported, endOfLife, latestVersion: latest.version.replace(/^v/, "") };
 }
 
 // src/sources/npm.ts
+var import_semver = __toESM(require_semver2(), 1);
 var REGISTRY_URL = "https://registry.npmjs.org";
-async function fetchLatest(fetcher, name) {
-  const url = `${REGISTRY_URL}/${name.replace("/", "%2F")}/latest`;
+function packageUrl(name) {
+  return `${REGISTRY_URL}/${name.replace("/", "%2F")}`;
+}
+async function getJson2(fetcher, url) {
   const response = await fetcher(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
   }
-  const payload = await response.json();
-  if (!payload.version) {
+  return await response.json();
+}
+async function fetchLatest(fetcher, name, releasedBy) {
+  if (releasedBy === void 0) {
+    const url2 = `${packageUrl(name)}/latest`;
+    const payload2 = await getJson2(fetcher, url2);
+    if (!payload2.version) {
+      throw new Error(`${url2} returned no version`);
+    }
+    return { name, version: payload2.version, integrity: payload2.dist?.integrity };
+  }
+  const url = packageUrl(name);
+  const payload = await getJson2(fetcher, url);
+  const latest = payload["dist-tags"]?.latest;
+  if (!latest || !payload.versions) {
     throw new Error(`${url} returned no version`);
   }
-  return { name, version: payload.version, integrity: payload.dist?.integrity };
+  let best;
+  for (const version of Object.keys(payload.versions)) {
+    const published = Date.parse(payload.time?.[version] ?? "");
+    if (import_semver.default.valid(version) && !import_semver.default.prerelease(version) && import_semver.default.lte(version, latest) && published <= releasedBy && (best === void 0 || import_semver.default.gt(version, best))) {
+      best = version;
+    }
+  }
+  if (best === void 0) {
+    return void 0;
+  }
+  return {
+    name,
+    version: best,
+    integrity: payload.versions[best]?.dist?.integrity,
+    published: payload.time?.[best]
+  };
 }
 
 // src/updaters/packageJson.ts
-var import_semver = __toESM(require_semver2(), 1);
+var import_semver2 = __toESM(require_semver2(), 1);
 
 // src/updaters/pin.ts
 function compare(a, b) {
@@ -9698,7 +9744,7 @@ async function widenPeerRange(ws, path, name, major) {
       return [];
     }
     const range = peers[name];
-    if (import_semver.default.satisfies(`${major}.0.0`, range)) {
+    if (import_semver2.default.satisfies(`${major}.0.0`, range)) {
       return [];
     }
     const next = `${range.trim()} || ^${major}`;
@@ -10012,6 +10058,10 @@ var Workspace = class {
 };
 
 // src/plan.ts
+var DAY2 = 24 * 60 * 60 * 1e3;
+function releaseCutoff(today, days) {
+  return days > 0 ? Date.parse(`${today}T00:00:00Z`) - days * DAY2 : void 0;
+}
 var LABELS = {
   node: "Node.js",
   bun: "Bun",
@@ -10050,12 +10100,29 @@ var Context = class {
     }
     return [...added];
   }
+  /** The release to move to, or `undefined` (logged) when none is old enough yet. */
+  async release(deps, name) {
+    const days = this.inputs.minimumReleaseAge;
+    const release = await fetchLatest(deps.fetcher, name, releaseCutoff(deps.today, days));
+    if (!release) {
+      deps.logger.log(`${name}: no release is ${days} days old yet.`);
+    }
+    return release;
+  }
+  ageNote() {
+    const days = this.inputs.minimumReleaseAge;
+    return days > 0 ? ` at least ${days} days old` : "";
+  }
   finish(title, reasons) {
     return { target: this.target, title, reasons, changes: this.ws.changes() };
   }
 };
 async function planNode(context, deps) {
-  const status = await fetchNodeStatus(deps.fetcher, deps.today);
+  const status = await fetchNodeStatus(
+    deps.fetcher,
+    deps.today,
+    releaseCutoff(deps.today, context.inputs.minimumReleaseAge)
+  );
   const supported = status.supported.map((line) => line.major);
   const floor = supported[0] ?? 0;
   const added = /* @__PURE__ */ new Set();
@@ -10115,12 +10182,15 @@ async function planNode(context, deps) {
   }
   if (pins.length > 0) {
     titles.push(`update Node.js to ${latest}`);
-    reasons.push(`The latest LTS release is Node.js ${latest}.`);
+    reasons.push(`The latest LTS release${context.ageNote()} is Node.js ${latest}.`);
   }
   return context.finish(titles.join(", "), reasons);
 }
 async function planTool(context, deps, name) {
-  const release = await fetchLatest(deps.fetcher, name);
+  const release = await context.release(deps, name);
+  if (!release) {
+    return context.finish("", []);
+  }
   const latest = release.version;
   const label = labelOf(context.target);
   const pins = [
@@ -10135,15 +10205,22 @@ async function planTool(context, deps, name) {
     ...added.length > 0 ? [`support ${label} ${added.join(", ")}`] : [],
     ...pins.length > 0 ? [`update ${label} to ${latest}`] : []
   ];
-  return context.finish(titles.join(", "), [`The latest release is ${label} ${latest}.`]);
+  return context.finish(titles.join(", "), [
+    `The latest release${context.ageNote()} is ${label} ${latest}.`
+  ]);
 }
 async function planPackage(context, deps, name) {
-  const release = await fetchLatest(deps.fetcher, name);
+  const release = await context.release(deps, name);
+  if (!release) {
+    return context.finish("", []);
+  }
   const major = majorOf(release.version);
   const widened = await widenPeerRange(context.ws, context.project("package.json"), name, major);
   const added = await context.addMajorToMatrices(major);
   const title = widened.length > 0 || added.length > 0 ? `support ${name} ${major}` : "";
-  return context.finish(title, [`The latest release is ${name} ${release.version}.`]);
+  return context.finish(title, [
+    `The latest release${context.ageNote()} is ${name} ${release.version}.`
+  ]);
 }
 async function planTarget(inputs, target, deps) {
   const context = new Context(inputs, target);

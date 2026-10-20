@@ -47,6 +47,16 @@ describe("parseInputs", () => {
     );
   });
 
+  it("reads minimum-release-age as whole days", () => {
+    expect(parseInputs(base).minimumReleaseAge).toBe(0);
+    expect(parseInputs({ ...base, INPUT_MINIMUM_RELEASE_AGE: " 14 " }).minimumReleaseAge).toBe(14);
+    for (const value of ["-1", "1.5", "two weeks"]) {
+      expect(() => parseInputs({ ...base, INPUT_MINIMUM_RELEASE_AGE: value })).toThrow(
+        "minimum-release-age",
+      );
+    }
+  });
+
   it("requires at least one target", () => {
     expect(() => parseInputs({ ...base, INPUT_TARGETS: " \n" })).toThrow("targets");
   });

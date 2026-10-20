@@ -9,6 +9,7 @@ export interface Env {
   INPUT_POST_UPDATE?: string | undefined;
   INPUT_REPOSITORY?: string | undefined;
   INPUT_DRY_RUN?: string | undefined;
+  INPUT_MINIMUM_RELEASE_AGE?: string | undefined;
   GITHUB_WORKSPACE?: string | undefined;
   GITHUB_OUTPUT?: string | undefined;
   GITHUB_SERVER_URL?: string | undefined;
@@ -42,6 +43,8 @@ export interface ActionInputs {
   owner: string;
   repo: string;
   dryRun: boolean;
+  /** Days a release must have been out before it is proposed; 0 takes the latest. */
+  minimumReleaseAge: number;
   serverUrl: string;
   apiUrl: string;
   outputFile: string | undefined;
@@ -131,6 +134,11 @@ export function parseInputs(env: Env): ActionInputs {
     throw new Error(`\`repository\` must be in "owner/repo" format, got: "${repository ?? ""}"`);
   }
 
+  const age = trimmed(env.INPUT_MINIMUM_RELEASE_AGE) ?? "0";
+  if (!/^\d+$/.test(age)) {
+    throw new Error(`\`minimum-release-age\` must be a whole number of days, got: "${age}"`);
+  }
+
   const repoRoot = trimmed(env.GITHUB_WORKSPACE) ?? process.cwd();
 
   return {
@@ -144,6 +152,7 @@ export function parseInputs(env: Env): ActionInputs {
     owner,
     repo,
     dryRun,
+    minimumReleaseAge: Number(age),
     serverUrl: trimmed(env.GITHUB_SERVER_URL) ?? "https://github.com",
     apiUrl: trimmed(env.GITHUB_API_URL) ?? "https://api.github.com",
     outputFile: trimmed(env.GITHUB_OUTPUT),

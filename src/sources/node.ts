@@ -1,6 +1,8 @@
 export const SCHEDULE_URL = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json";
 export const INDEX_URL = "https://nodejs.org/dist/index.json";
 
+const DAY = 24 * 60 * 60 * 1000;
+
 interface ScheduleEntry {
   start?: string;
   lts?: string;
@@ -11,6 +13,8 @@ interface ScheduleEntry {
 
 interface IndexEntry {
   version: string;
+  /** Release date, YYYY-MM-DD. */
+  date: string;
   lts: string | false;
 }
 
@@ -25,7 +29,11 @@ export interface NodeStatus {
   supported: NodeLine[];
   /** Lines that were LTS at some point and are past end-of-life, oldest first. */
   endOfLife: NodeLine[];
-  /** Latest release of the newest supported line, without the leading "v". */
+  /**
+   * Latest release of the newest supported line, without the leading "v". With
+   * a release cutoff, the newest release published before it, falling back to
+   * older supported lines.
+   */
   latestVersion: string;
 }
 
@@ -42,7 +50,12 @@ async function getJson<T>(fetcher: typeof fetch, url: string): Promise<T> {
  * schedule's own `lts` date decides that, so nothing here assumes that only
  * even majors become LTS — which stops being true from Node.js 27 on.
  */
-export async function fetchNodeStatus(fetcher: typeof fetch, today: string): Promise<NodeStatus> {
+export async function fetchNodeStatus(
+  fetcher: typeof fetch,
+  today: string,
+  /** Only releases at least this old count, as an instant in ms. */
+  releasedBy?: number,
+): Promise<NodeStatus> {
   const schedule = await getJson<Record<string, ScheduleEntry>>(fetcher, SCHEDULE_URL);
 
   const supported: NodeLine[] = [];
@@ -68,9 +81,22 @@ export async function fetchNodeStatus(fetcher: typeof fetch, today: string): Pro
   }
 
   const index = await getJson<IndexEntry[]>(fetcher, INDEX_URL);
-  const latest = index.find((entry) => entry.version.startsWith(`v${newest.major}.`));
+  // index.json only has the day: count a release from the end of that day.
+  const oldEnough = (entry: IndexEntry) =>
+    releasedBy === undefined || Date.parse(`${entry.date}T00:00:00Z`) + DAY <= releasedBy;
+  let latest: IndexEntry | undefined;
+  for (const line of [...supported].reverse()) {
+    latest = index.find((entry) => entry.version.startsWith(`v${line.major}.`) && oldEnough(entry));
+    if (latest || releasedBy === undefined) {
+      break;
+    }
+  }
   if (!latest) {
-    throw new Error(`${INDEX_URL} has no release for Node.js ${newest.major}`);
+    throw new Error(
+      releasedBy === undefined
+        ? `${INDEX_URL} has no release for Node.js ${newest.major}`
+        : `${INDEX_URL} has no supported Node.js release older than ${new Date(releasedBy).toISOString()}`,
+    );
   }
 
   return { supported, endOfLife, latestVersion: latest.version.replace(/^v/, "") };

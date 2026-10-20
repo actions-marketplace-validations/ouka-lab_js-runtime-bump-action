@@ -147,7 +147,24 @@ workspace.
 | `base-branch` | No | checked-out branch | Branch the pull requests target. |
 | `post-update` | No | `""` | Command run before committing, e.g. `pnpm install --lockfile-only`. |
 | `repository` | No | `github.repository` | `owner/repo`. |
+| `minimum-release-age` | No | `0` | Days a release must have been out before it is proposed. See [Release age](#release-age). |
 | `dry-run` | No | `false` | Log the planned changes; write, push and open nothing. |
+
+## Release age
+
+`minimum-release-age: 14` makes the action propose only releases published at
+least 14 days ago — the same idea as pnpm's
+[`minimumReleaseAge`](https://pnpm.io/settings#minimumreleaseage), and worth
+setting to the same value if you use it, or the pull request would pin a
+version your own install refuses.
+
+- **Pins and new majors** use the newest stable version, up to `latest`, that is
+  old enough. If pnpm 12.0.1 is a day old, you get 12.0.0; if ESLint 11.0.0 is a
+  day old, `peerDependencies` and the matrix wait.
+- **Node.js lines are not delayed**: a line is added on its LTS date and removed
+  on its end-of-life date, since by then it has been out for months. The pinned
+  Node.js version still respects the age.
+- The age is counted from the start of the day (UTC) of the run, in whole days.
 
 ## Outputs
 

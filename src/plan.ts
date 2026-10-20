@@ -32,6 +32,16 @@ export interface PlanDeps {
   logger: Logger;
 }
 
+const DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Releases published after this instant are too new. Counted from the start
+ * of `today`, so a release is at least that many days old whenever the run is.
+ */
+function releaseCutoff(today: string, days: number): number | undefined {
+  return days > 0 ? Date.parse(`${today}T00:00:00Z`) - days * DAY : undefined;
+}
+
 const LABELS: Record<Exclude<Target["kind"], "npm">, string> = {
   node: "Node.js",
   bun: "Bun",
@@ -77,13 +87,32 @@ class Context {
     return [...added];
   }
 
+  /** The release to move to, or `undefined` (logged) when none is old enough yet. */
+  async release(deps: PlanDeps, name: string): Promise<PackageRelease | undefined> {
+    const days = this.inputs.minimumReleaseAge;
+    const release = await fetchLatest(deps.fetcher, name, releaseCutoff(deps.today, days));
+    if (!release) {
+      deps.logger.log(`${name}: no release is ${days} days old yet.`);
+    }
+    return release;
+  }
+
+  ageNote(): string {
+    const days = this.inputs.minimumReleaseAge;
+    return days > 0 ? ` at least ${days} days old` : "";
+  }
+
   finish(title: string, reasons: string[]): Plan {
     return { target: this.target, title, reasons, changes: this.ws.changes() };
   }
 }
 
 async function planNode(context: Context, deps: PlanDeps): Promise<Plan> {
-  const status = await fetchNodeStatus(deps.fetcher, deps.today);
+  const status = await fetchNodeStatus(
+    deps.fetcher,
+    deps.today,
+    releaseCutoff(deps.today, context.inputs.minimumReleaseAge),
+  );
   const supported = status.supported.map((line) => line.major);
   const floor = supported[0] ?? 0;
 
@@ -153,13 +182,16 @@ async function planNode(context: Context, deps: PlanDeps): Promise<Plan> {
   }
   if (pins.length > 0) {
     titles.push(`update Node.js to ${latest}`);
-    reasons.push(`The latest LTS release is Node.js ${latest}.`);
+    reasons.push(`The latest LTS release${context.ageNote()} is Node.js ${latest}.`);
   }
   return context.finish(titles.join(", "), reasons);
 }
 
 async function planTool(context: Context, deps: PlanDeps, name: "bun" | "pnpm"): Promise<Plan> {
-  const release = await fetchLatest(deps.fetcher, name);
+  const release = await context.release(deps, name);
+  if (!release) {
+    return context.finish("", []);
+  }
   const latest = release.version;
   const label = labelOf(context.target);
 
@@ -178,18 +210,25 @@ async function planTool(context: Context, deps: PlanDeps, name: "bun" | "pnpm"):
     ...(added.length > 0 ? [`support ${label} ${added.join(", ")}`] : []),
     ...(pins.length > 0 ? [`update ${label} to ${latest}`] : []),
   ];
-  return context.finish(titles.join(", "), [`The latest release is ${label} ${latest}.`]);
+  return context.finish(titles.join(", "), [
+    `The latest release${context.ageNote()} is ${label} ${latest}.`,
+  ]);
 }
 
 async function planPackage(context: Context, deps: PlanDeps, name: string): Promise<Plan> {
-  const release = await fetchLatest(deps.fetcher, name);
+  const release = await context.release(deps, name);
+  if (!release) {
+    return context.finish("", []);
+  }
   const major = majorOf(release.version);
 
   const widened = await widenPeerRange(context.ws, context.project("package.json"), name, major);
   const added = await context.addMajorToMatrices(major);
 
   const title = widened.length > 0 || added.length > 0 ? `support ${name} ${major}` : "";
-  return context.finish(title, [`The latest release is ${name} ${release.version}.`]);
+  return context.finish(title, [
+    `The latest release${context.ageNote()} is ${name} ${release.version}.`,
+  ]);
 }
 
 export async function planTarget(

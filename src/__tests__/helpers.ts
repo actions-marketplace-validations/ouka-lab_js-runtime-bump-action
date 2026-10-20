@@ -37,16 +37,33 @@ export const SCHEDULE = {
 };
 
 export const NODE_INDEX = [
-  { version: "v27.1.0", lts: "Example" },
-  { version: "v26.3.0", lts: "Example" },
-  { version: "v24.11.1", lts: "Krypton" },
-  { version: "v22.20.0", lts: "Jod" },
+  { version: "v27.1.0", date: "2027-04-29", lts: "Example" },
+  { version: "v27.0.0", date: "2027-04-20", lts: false },
+  { version: "v26.3.0", date: "2027-03-01", lts: "Example" },
+  { version: "v24.11.1", date: "2026-01-01", lts: "Krypton" },
+  { version: "v22.20.0", date: "2025-10-01", lts: "Jod" },
 ];
 
-export const PACKAGES: Record<string, { version: string; integrity?: string }> = {
-  pnpm: { version: "12.0.1", integrity: `sha512-${Buffer.from("tarball").toString("base64")}` },
-  bun: { version: "1.5.0" },
-  eslint: { version: "11.0.0" },
+export const integrityOf = (spec: string) => `sha512-${Buffer.from(spec).toString("base64")}`;
+
+/** `latest` and the publish time of every version, as the full packument has it. */
+export const PACKAGES: Record<string, { latest: string; time: Record<string, string> }> = {
+  pnpm: {
+    latest: "12.0.1",
+    time: {
+      "11.9.0": "2027-03-01T00:00:00.000Z",
+      "12.0.0": "2027-04-10T12:00:00.000Z",
+      "12.0.1": "2027-04-30T12:00:00.000Z",
+      // a prerelease and a version past `latest` are never proposed
+      "13.0.0-rc.0": "2027-01-01T00:00:00.000Z",
+      "13.0.0": "2027-01-01T00:00:00.000Z",
+    },
+  },
+  bun: { latest: "1.5.0", time: { "1.5.0": "2027-01-01T00:00:00.000Z" } },
+  eslint: {
+    latest: "11.0.0",
+    time: { "10.5.0": "2027-03-01T00:00:00.000Z", "11.0.0": "2027-04-25T00:00:00.000Z" },
+  },
 };
 
 export interface RecordedRequest {
@@ -78,12 +95,23 @@ export function stubFetch(options: { pulls?: { number: number; html_url: string 
     if (url.endsWith("/dist/index.json")) {
       return json(NODE_INDEX);
     }
-    const registry = /^https:\/\/registry\.npmjs\.org\/(.+)\/latest$/.exec(url);
+    const registry = /^https:\/\/registry\.npmjs\.org\/([^/]+)(\/latest)?$/.exec(url);
     if (registry) {
-      const pkg = PACKAGES[decodeURIComponent(registry[1] ?? "")];
-      return pkg
-        ? json({ version: pkg.version, dist: { integrity: pkg.integrity } })
-        : json({}, 404);
+      const name = decodeURIComponent(registry[1] ?? "");
+      const pkg = PACKAGES[name];
+      if (!pkg) {
+        return json({}, 404);
+      }
+      if (registry[2]) {
+        return json({
+          version: pkg.latest,
+          dist: { integrity: integrityOf(`${name}@${pkg.latest}`) },
+        });
+      }
+      const versions = Object.fromEntries(
+        Object.keys(pkg.time).map((v) => [v, { dist: { integrity: integrityOf(`${name}@${v}`) } }]),
+      );
+      return json({ "dist-tags": { latest: pkg.latest }, versions, time: pkg.time });
     }
     if (url.includes("/pulls")) {
       if (method === "GET") {

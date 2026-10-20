@@ -152,6 +152,40 @@ describe("run (dry-run)", () => {
     expect(logger.lines[0]).toBe("[dry-run] [node] chore: support Node.js 27, drop Node.js < 24");
   });
 
+  it("holds back releases younger than minimum-release-age", async () => {
+    const dir = await workspace({
+      ".github/workflows/test.yml": WORKFLOW,
+      "package.json": PACKAGE,
+    });
+    const dryRun = { INPUT_DRY_RUN: "true", INPUT_GITHUB_TOKEN: "" };
+    const logger = silent();
+
+    // Cut-off 2027-04-24: pnpm 12.0.1 (04-30) and eslint 11.0.0 (04-25) are too new.
+    const result = await run(env(dir, { ...dryRun, INPUT_MINIMUM_RELEASE_AGE: "7" }), {
+      fetcher: stubFetch().fetcher,
+      logger,
+      today: TODAY,
+    });
+    const [node, pnpm, eslint] = result.plans;
+    // LTS and end-of-life dates are not release ages: Node.js 27 is still added.
+    expect(node?.title).toBe("support Node.js 27, drop Node.js < 24");
+    expect(pnpm?.title).toBe("update pnpm to 12.0.0");
+    expect(pnpm?.reasons).toEqual(["The latest release at least 7 days old is pnpm 12.0.0."]);
+    expect(eslint?.changes).toEqual([]);
+
+    const none = await run(
+      env(dir, {
+        ...dryRun,
+        INPUT_MINIMUM_RELEASE_AGE: "365",
+        INPUT_TARGETS: "bun",
+        INPUT_MATRIX: "",
+      }),
+      { fetcher: stubFetch().fetcher, logger, today: TODAY },
+    );
+    expect(none.plans[0]?.changes).toEqual([]);
+    expect(logger.lines).toContain("bun: no release is 365 days old yet.");
+  });
+
   it("writes the outputs", async () => {
     const dir = await workspace({
       ".github/workflows/test.yml": WORKFLOW,

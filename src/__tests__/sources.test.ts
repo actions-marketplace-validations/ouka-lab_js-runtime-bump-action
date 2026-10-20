@@ -3,7 +3,7 @@ import { Git } from "../git.ts";
 import { upsertPullRequest } from "../github.ts";
 import { fetchNodeStatus } from "../sources/node.ts";
 import { fetchLatest } from "../sources/npm.ts";
-import { NODE_INDEX, SCHEDULE, stubFetch } from "./helpers.ts";
+import { integrityOf, NODE_INDEX, SCHEDULE, stubFetch } from "./helpers.ts";
 
 const respond = (routes: Record<string, unknown>, status = 200) =>
   (async (input: string | URL | Request) => {
@@ -32,7 +32,7 @@ describe("fetchNodeStatus", () => {
     await expect(fetchNodeStatus(stubFetch().fetcher, "2000-01-01")).rejects.toThrow(
       "no Node.js line",
     );
-    const fetcher = respond({ "/schedule.json": SCHEDULE, "/index.json": NODE_INDEX.slice(1) });
+    const fetcher = respond({ "/schedule.json": SCHEDULE, "/index.json": NODE_INDEX.slice(2) });
     await expect(fetchNodeStatus(fetcher, "2027-05-01")).rejects.toThrow(
       "no release for Node.js 27",
     );
@@ -40,6 +40,18 @@ describe("fetchNodeStatus", () => {
 
   it("surfaces HTTP failures", async () => {
     await expect(fetchNodeStatus(respond({}), "2027-05-01")).rejects.toThrow("404 Not Found");
+  });
+
+  it("with a cut-off, takes the newest release out for long enough", async () => {
+    const at = (iso: string) => Date.parse(iso);
+    const status = (cutoff: string) =>
+      fetchNodeStatus(stubFetch().fetcher, "2027-05-01", at(cutoff));
+    // 27.0.0 is dated 2027-04-20 and counts from the end of that day.
+    expect((await status("2027-04-24T00:00:00Z")).latestVersion).toBe("27.0.0");
+    expect((await status("2027-04-21T00:00:00Z")).latestVersion).toBe("27.0.0");
+    // Nothing on 27 is old enough yet: fall back to the previous LTS line.
+    expect((await status("2027-04-20T23:59:59Z")).latestVersion).toBe("26.3.0");
+    await expect(status("2025-01-01T00:00:00Z")).rejects.toThrow("no supported Node.js release");
   });
 });
 
@@ -52,6 +64,20 @@ describe("fetchLatest", () => {
       "https://registry.npmjs.org/eslint/latest",
       "https://registry.npmjs.org/@types%2Fnode/latest",
     ]);
+  });
+
+  it("with a cut-off, takes the newest stable version up to latest published by then", async () => {
+    const { fetcher, requests } = stubFetch();
+    const release = await fetchLatest(fetcher, "pnpm", Date.parse("2027-04-24T00:00:00Z"));
+    expect(release).toEqual({
+      name: "pnpm",
+      version: "12.0.0",
+      integrity: integrityOf("pnpm@12.0.0"),
+      published: "2027-04-10T12:00:00.000Z",
+    });
+    expect(requests[0]?.url).toBe("https://registry.npmjs.org/pnpm");
+    expect(await fetchLatest(fetcher, "pnpm", Date.parse("2026-01-01T00:00:00Z"))).toBeUndefined();
+    await expect(fetchLatest(respond({ "/pnpm": {} }), "pnpm", 0)).rejects.toThrow("no version");
   });
 
   it("fails on HTTP errors and on payloads without a version", async () => {

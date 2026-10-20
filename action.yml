@@ -48,6 +48,15 @@ inputs:
     description: 'Target repository in "owner/repo" format.'
     required: false
     default: ${{ github.repository }}
+  minimum-release-age:
+    description: >
+      Only propose releases published at least this many days ago, like pnpm's
+      `minimumReleaseAge`, so a broken or compromised release has time to be
+      pulled first. Applies to the versions pinned and to new majors in
+      `peerDependencies` and matrices; Node.js lines are still added on their
+      LTS date and removed on their end-of-life date. `0` takes the latest.
+    required: false
+    default: '0'
   dry-run:
     description: 'When "true", log the planned changes without writing, pushing or opening anything.'
     required: false
@@ -77,5 +86,6 @@ runs:
         INPUT_POST_UPDATE: ${{ inputs.post-update }}
         INPUT_REPOSITORY: ${{ inputs.repository }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
+        INPUT_MINIMUM_RELEASE_AGE: ${{ inputs.minimum-release-age }}
         GITHUB_WORKSPACE: ${{ github.workspace }}
       run: node "${GITHUB_ACTION_PATH}/dist/main.js"
