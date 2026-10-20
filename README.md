@@ -175,9 +175,11 @@ version your own install refuses.
 
 ## How pull requests behave
 
-- **One pull request per target**, on the branch `js-runtime-bump/<target>`
-  (`npm:@scope/pkg` → `js-runtime-bump/npm-scope-pkg`), each built from the
-  base branch on its own.
+- **One pull request per target**, on the branch `js-runtime-bump/<target>-<hash>`
+  (`npm:@scope/pkg` → `js-runtime-bump/npm-scope-pkg-1a2b3c4d`), each built from
+  the base branch on its own. The hash covers the target, `working-directory`
+  and the base branch, so runs for different packages of a monorepo, or for
+  different base branches, never share a branch.
 - **Re-runs are quiet.** When the branch already holds the same change on the
   same base, nothing is pushed, so CI and reviewers are not pinged again. When
   the base has moved, the branch is rebuilt and force-pushed, and the open pull
