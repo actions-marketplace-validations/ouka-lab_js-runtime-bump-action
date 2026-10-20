@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { type ActionInputs, type Env, parseInputs, type Target } from "./env.ts";
 import { type Exec, Git, spawnExec } from "./git.ts";
 import { upsertPullRequest } from "./github.ts";
@@ -23,8 +24,18 @@ export interface RunResult {
   pullRequests: string[];
 }
 
-export function branchOf(target: Target): string {
-  return `js-runtime-bump/${target.id.replace(/[^a-z0-9.-]+/gi, "-").replace(/^-|-$/g, "")}`;
+/**
+ * The slug keeps the branch readable; the hash keeps it unique, since the slug
+ * folds `npm:@a/b-c` and `npm:@a-b/c` together and runs for other project
+ * directories or base branches would otherwise force-push over each other.
+ */
+export function branchOf(target: Target, projectDir: string, baseBranch: string): string {
+  const slug = target.id.replace(/[^a-z0-9.-]+/gi, "-").replace(/^-|-$/g, "");
+  const hash = createHash("sha256")
+    .update([target.id, projectDir.split(sep).join("/"), baseBranch].join("\n"))
+    .digest("hex")
+    .slice(0, 8);
+  return `js-runtime-bump/${slug}-${hash}`;
 }
 
 export function titleOf(plan: Plan): string {
@@ -84,7 +95,7 @@ async function publish(
   deps: Required<Pick<RunDeps, "fetcher" | "exec" | "logger">>,
 ): Promise<string> {
   const token = inputs.token ?? "";
-  const branch = branchOf(plan.target);
+  const branch = branchOf(plan.target, relative(inputs.repoRoot, inputs.projectDir), baseBranch);
   const title = titleOf(plan);
   const body = bodyOf(plan);
 

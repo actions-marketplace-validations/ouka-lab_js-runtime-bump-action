@@ -53,6 +53,10 @@ const MATRIX = [
 
 const TODAY = "2027-05-01";
 
+const NODE_BRANCH = branchOf({ kind: "node", id: "node" }, "", "main");
+const PNPM_BRANCH = branchOf({ kind: "pnpm", id: "pnpm" }, "", "main");
+const ESLINT_BRANCH = branchOf({ kind: "npm", id: "npm:eslint", name: "eslint" }, "", "main");
+
 function silent(): Logger & { lines: string[] } {
   const lines: string[] = [];
   return { lines, log: (line) => lines.push(line), warn: (line) => lines.push(`warn: ${line}`) };
@@ -238,26 +242,21 @@ describe("run (publishing)", () => {
 
     expect(result.pullRequests).toHaveLength(3);
     const branches = (await git(remote, "branch", "--format=%(refname:short)")).split("\n").sort();
-    expect(branches).toEqual([
-      "js-runtime-bump/node",
-      "js-runtime-bump/npm-eslint",
-      "js-runtime-bump/pnpm",
-      "main",
-    ]);
+    expect(branches).toEqual([NODE_BRANCH, ESLINT_BRANCH, PNPM_BRANCH, "main"].sort());
 
-    const nodePackage = await git(remote, "show", "js-runtime-bump/node:package.json");
+    const nodePackage = await git(remote, "show", `${NODE_BRANCH}:package.json`);
     expect(JSON.parse(nodePackage).engines.node).toBe(">=24");
     // The node branch carries only the node change.
     expect(JSON.parse(nodePackage).peerDependencies.eslint).toBe("^9.7 || ^10");
-    expect(await git(remote, "log", "-1", "--format=%s", "js-runtime-bump/node")).toBe(
+    expect(await git(remote, "log", "-1", "--format=%s", NODE_BRANCH)).toBe(
       "chore: support Node.js 27, drop Node.js < 24",
     );
 
     const created = requests.filter((request) => request.method === "POST");
     expect(created.map((request) => (request.body as { head: string }).head)).toEqual([
-      "js-runtime-bump/node",
-      "js-runtime-bump/pnpm",
-      "js-runtime-bump/npm-eslint",
+      NODE_BRANCH,
+      PNPM_BRANCH,
+      ESLINT_BRANCH,
     ]);
     expect(created[0]?.body).toMatchObject({ base: "main" });
 
@@ -275,7 +274,7 @@ describe("run (publishing)", () => {
       today: TODAY,
       exec,
     });
-    const first = await git(remote, "rev-parse", "js-runtime-bump/npm-eslint");
+    const first = await git(remote, "rev-parse", ESLINT_BRANCH);
 
     const logger = silent();
     const { fetcher, requests } = stubFetch({
@@ -283,9 +282,9 @@ describe("run (publishing)", () => {
     });
     const result = await run(env(dir, options), { fetcher, logger, today: TODAY, exec });
 
-    expect(await git(remote, "rev-parse", "js-runtime-bump/npm-eslint")).toBe(first);
+    expect(await git(remote, "rev-parse", ESLINT_BRANCH)).toBe(first);
     expect(logger.lines).toContain(
-      "[npm:eslint] js-runtime-bump/npm-eslint already has these changes; not pushing.",
+      `[npm:eslint] ${ESLINT_BRANCH} already has these changes; not pushing.`,
     );
     expect(requests.some((request) => request.method === "PATCH")).toBe(true);
     expect(result.pullRequests).toEqual(["https://github.com/ouka-lab/demo/pull/5"]);
@@ -302,7 +301,7 @@ describe("run (publishing)", () => {
       }),
       { fetcher: stubFetch().fetcher, logger: silent(), today: TODAY, exec },
     );
-    const files = await git(remote, "ls-tree", "--name-only", "js-runtime-bump/npm-eslint");
+    const files = await git(remote, "ls-tree", "--name-only", ESLINT_BRANCH);
     expect(files.split("\n")).toContain("lock.txt");
     expect(files.split("\n")).not.toContain("stray.txt");
   });
@@ -364,9 +363,28 @@ describe("run (publishing)", () => {
 
 describe("branchOf / bodyOf", () => {
   it("makes scoped package names safe for a branch", () => {
-    expect(branchOf({ kind: "npm", id: "npm:@types/node", name: "@types/node" })).toBe(
-      "js-runtime-bump/npm-types-node",
-    );
+    expect(
+      branchOf({ kind: "npm", id: "npm:@types/node", name: "@types/node" }, "", "main"),
+    ).toMatch(/^js-runtime-bump\/npm-types-node-[0-9a-f]{8}$/);
+  });
+
+  it("keeps targets whose slugs collide on separate branches", () => {
+    const npm = (name: string) => ({ kind: "npm", id: `npm:${name}`, name }) as const;
+    const pairs = [
+      ["@types/node", "types-node"],
+      ["foo_bar", "foo-bar"],
+      ["@a/b-c", "@a-b/c"],
+    ];
+    for (const [a = "", b = ""] of pairs) {
+      expect(branchOf(npm(a), "", "main")).not.toBe(branchOf(npm(b), "", "main"));
+    }
+  });
+
+  it("keeps project directories and base branches on separate branches", () => {
+    const node = { kind: "node", id: "node" } as const;
+    expect(branchOf(node, "packages/a", "main")).not.toBe(branchOf(node, "packages/b", "main"));
+    expect(branchOf(node, "", "main")).not.toBe(branchOf(node, "", "release/v1"));
+    expect(branchOf(node, "", "main")).toBe(branchOf(node, "", "main"));
   });
 
   it("lists every change and reason", () => {
