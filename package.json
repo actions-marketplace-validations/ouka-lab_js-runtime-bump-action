@@ -1,6 +1,6 @@
 {
   "name": "js-runtime-bump-action",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Open pull requests that keep the Node.js, Bun, pnpm and peer dependency versions a JavaScript project supports up to date",
   "license": "MIT",
   "author": "Kanon",
